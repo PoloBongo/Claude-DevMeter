@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "clangd-lsp@claude-plugins-official": false,
+    "searchfit-seo@claude-community": false,
+    "chrome-devtools-mcp@claude-plugins-official": false
+  }
+}
