@@ -61,7 +61,7 @@ jobs:
       - name: Publish to GitHub Packages
         run: |
           npm pkg set name=@polobongo/devmeter-cli
-          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> "$NPM_CONFIG_USERCONFIG"
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" > .npmrc
           GH_REGISTRY=https://npm.pkg.github.com
           LOCAL_VERSION=$(node -p "require('./package.json').version")
           PUBLISHED_VERSION=$(npm view @polobongo/devmeter-cli version --registry=$GH_REGISTRY 2>/dev/null || echo "none")
