@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashApiKey } from "@/lib/api-key";
+import { deriveTaskType } from "@/lib/task-type";
 
 const modelBucketSchema = z.object({
   input: z.number().int().min(0),
@@ -26,6 +27,17 @@ const ingestSchema = z.object({
   estimatedCostUsd: z.number().min(0),
   // Optional so older collector builds (pre-2026-07-31) still ingest fine.
   modelBreakdown: z.record(z.string(), modelBucketSchema).optional(),
+  // Friction/outcome counters (collector >= 0.1.4). All optional: an older
+  // collector omits them and the columns stay untouched/null.
+  promptCount: z.number().int().min(0).optional(),
+  editAccepted: z.number().int().min(0).optional(),
+  editRejected: z.number().int().min(0).optional(),
+  toolCalls: z.number().int().min(0).optional(),
+  toolErrors: z.number().int().min(0).optional(),
+  linesAdded: z.number().int().min(0).optional(),
+  linesRemoved: z.number().int().min(0).optional(),
+  commitCount: z.number().int().min(0).optional(),
+  prCount: z.number().int().min(0).optional(),
 });
 
 function extractApiKey(request: Request): string | null {
@@ -90,7 +102,18 @@ export async function POST(request: Request) {
     tokensCacheCreation: data.tokensCacheCreation,
     estimatedCostUsd: data.estimatedCostUsd,
     modelBreakdown: data.modelBreakdown ?? undefined,
+    // `undefined` = leave the column alone (Prisma skips it on update).
+    promptCount: data.promptCount,
+    editAccepted: data.editAccepted,
+    editRejected: data.editRejected,
+    toolCalls: data.toolCalls,
+    toolErrors: data.toolErrors,
+    linesAdded: data.linesAdded,
+    linesRemoved: data.linesRemoved,
+    commitCount: data.commitCount,
+    prCount: data.prCount,
   };
+  const derivedTaskType = deriveTaskType(data.gitBranch);
 
   // A clientSessionId lets the collector send periodic "session still in
   // progress" snapshots (every 5 min, or via `devmeter sync`) that update
@@ -106,12 +129,22 @@ export async function POST(request: Request) {
 
     const created = await prisma.session.upsert({
       where: { clientSessionId: data.clientSessionId },
-      create: { ...sessionFields, clientSessionId: data.clientSessionId },
-      update: sessionFields,
+      create: {
+        ...sessionFields,
+        taskType: derivedTaskType,
+        clientSessionId: data.clientSessionId,
+      },
+      // A task type edited by hand in the dashboard must survive later syncs.
+      update: {
+        ...sessionFields,
+        taskType: existing?.taskTypeManual ? undefined : derivedTaskType,
+      },
     });
     return NextResponse.json({ id: created.id, projectId: project.id }, { status: 201 });
   }
 
-  const created = await prisma.session.create({ data: sessionFields });
+  const created = await prisma.session.create({
+    data: { ...sessionFields, taskType: derivedTaskType },
+  });
   return NextResponse.json({ id: created.id, projectId: project.id }, { status: 201 });
 }

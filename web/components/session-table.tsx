@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { TASK_TYPE_LABELS } from "@/lib/task-type";
 import { formatDuration, formatTokens } from "@/lib/format";
 import { formatMoney, type Currency } from "@/lib/currency";
 import { DeleteSessionButton } from "@/components/delete-session-button";
@@ -82,8 +84,15 @@ function SingleSessionRow({
           : new Date(row.startedAt).toLocaleDateString()}
       </span>
       <div className="flex flex-col gap-0.5">
-        <span className="text-[13px]">{row.ticketRef ?? "—"}</span>
-        <span className="font-mono text-[11.5px] text-dim">{row.gitBranch ?? "—"}</span>
+        <Link
+          href={`/dashboard/sessions/${row.id}`}
+          className="text-[13px] hover:text-accent hover:underline"
+        >
+          {row.ticketRef ?? "Details"}
+        </Link>
+        <span className="font-mono text-[11.5px] text-dim">
+          {row.gitBranch ?? "—"} · {TASK_TYPE_LABELS[row.taskType]}
+        </span>
       </div>
       <span className="font-mono text-[13px]">{formatDuration(row.durationMinutes)}</span>
       <TokensCell row={row} />

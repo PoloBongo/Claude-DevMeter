@@ -96,6 +96,28 @@ model Session {
   importBatchId       String?
   createdAt           DateTime  @default(now())
 
+  // --- Quality / efficiency signals. All nullable: null = collector predates
+  // these fields (or the session was imported), never "zero". Counters only,
+  // never prompt or tool-output content.
+  /// bugfix | feature | refactor | chore | docs | test | other. Derived from gitBranch at ingest unless taskTypeManual.
+  taskType            String?
+  /// true once edited by hand in the dashboard — ingest then stops re-deriving it.
+  taskTypeManual      Boolean   @default(false)
+  promptCount         Int?
+  editAccepted        Int?
+  editRejected        Int?
+  toolCalls           Int?
+  toolErrors          Int?
+  linesAdded          Int?
+  linesRemoved        Int?
+  commitCount         Int?
+  prCount             Int?
+  /// Manual 1-5 rating.
+  rating              Int?
+  ratingComment       String?
+  /// Manual: the work was reverted later.
+  revertedLater       Boolean?
+
   // Composite index covers plain projectId lookups too (leftmost prefix),
   // so it replaces the old standalone @@index([projectId]).
   @@index([projectId, startedAt])

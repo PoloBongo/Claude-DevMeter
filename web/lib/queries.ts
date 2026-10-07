@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/auth";
 import type { PricingMode, Session } from "@/generated/prisma/client";
 import { convertFromUsd, getUsdToEurRate, type Currency } from "@/lib/currency";
 import { IMPORT_TEMPLATES } from "@/lib/imports";
+import { cacheRatio, meanOfKnown } from "@/lib/session-metrics";
+import { effectiveTaskType, TASK_TYPES, type TaskType } from "@/lib/task-type";
 
 export type DashboardPeriod = "month" | "7" | "30" | "all" | "custom";
 
@@ -518,6 +520,7 @@ export type SessionRowData = {
   paygCost: number;
   /** Per-model share of `cost`, already converted to the display currency — only set when a session used >1 model. */
   modelCosts: { model: string; cost: number }[] | null;
+  taskType: TaskType;
 };
 
 export type SessionDayGroup = {
@@ -655,4 +658,213 @@ export async function getOrgMemberStats(
       };
     })
   );
+}
+
+/** Everything needed to turn a raw session row into a display-currency cost, loaded once per page. */
+async function getPricingContext(userId: string) {
+  const user = await requireUser(userId);
+  const monthStart = startOfMonth(new Date());
+  const [monthTokensAgg, usdToEurRate] = await Promise.all([
+    prisma.session.aggregate({
+      where: { project: { userId }, startedAt: { gte: monthStart } },
+      _sum: {
+        tokensInput: true,
+        tokensOutput: true,
+        tokensCacheRead: true,
+        tokensCacheCreation: true,
+      },
+    }),
+    user.currency === "EUR" ? getUsdToEurRate() : Promise.resolve(1),
+  ]);
+  const pricing: Pricing = {
+    mode: user.pricingMode,
+    currency: user.currency,
+    subscriptionCost: Number(user.subscriptionCost ?? 0),
+    totalMonthTokens:
+      (monthTokensAgg._sum.tokensInput ?? 0) +
+      (monthTokensAgg._sum.tokensOutput ?? 0) +
+      (monthTokensAgg._sum.tokensCacheRead ?? 0) +
+      (monthTokensAgg._sum.tokensCacheCreation ?? 0),
+    usdToEurRate,
+  };
+  return { user, pricing };
+}
+
+/** One session (owner-checked) with its project, for the detail page. */
+export async function getSessionDetail(userId: string, sessionId: string) {
+  const [session, { user, pricing }] = await Promise.all([
+    prisma.session.findFirst({
+      where: { id: sessionId, project: { userId } },
+      include: { project: { select: { id: true, name: true } } },
+    }),
+    getPricingContext(userId),
+  ]);
+  if (!session) return null;
+
+  return {
+    session,
+    currency: user.currency,
+    pricingMode: user.pricingMode,
+    cost: effectiveSessionCost(session, pricing),
+    paygCost: convertFromUsd(paygEquivalentUsd(session), pricing.currency, pricing.usdToEurRate),
+    durationMinutes: sessionMinutes(session),
+    cacheRatio: cacheRatio(session),
+    taskType: effectiveTaskType(session),
+  };
+}
+
+export type InsightSession = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  startedAt: string;
+  ticketRef: string | null;
+  gitBranch: string | null;
+  taskType: TaskType;
+  cost: number;
+  promptCount: number | null;
+  cacheRatio: number | null;
+  committed: boolean | null;
+};
+
+export type TaskTypeStat = {
+  taskType: TaskType;
+  sessions: number;
+  avgCost: number;
+  avgPrompts: number | null;
+  /** How many of `sessions` actually reported a prompt count; the average only covers those. */
+  promptSamples: number;
+  avgCacheRatio: number | null;
+  cacheSamples: number;
+};
+
+export type PromptTrendPoint = {
+  id: string;
+  date: string;
+  prompts: number;
+  taskType: TaskType;
+};
+
+export type InsightsFilter = {
+  projectId?: string;
+  period?: DashboardPeriod;
+  customFrom?: Date | null;
+  customTo?: Date | null;
+};
+
+const TOP_N = 10;
+
+export async function getInsightsData(userId: string, filter?: InsightsFilter) {
+  const { user, pricing } = await getPricingContext(userId);
+  const period = filter?.period ?? "month";
+  const { start, end } = resolvePeriodRange(period, filter?.customFrom, filter?.customTo);
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - 7);
+
+  const select = {
+    id: true,
+    projectId: true,
+    project: { select: { name: true } },
+    startedAt: true,
+    endedAt: true,
+    ticketRef: true,
+    gitBranch: true,
+    taskType: true,
+    tokensInput: true,
+    tokensOutput: true,
+    tokensCacheRead: true,
+    tokensCacheCreation: true,
+    estimatedCostUsd: true,
+    promptCount: true,
+    commitCount: true,
+  } as const;
+  const projectWhere = {
+    project: { userId },
+    ...(filter?.projectId ? { projectId: filter.projectId } : {}),
+  };
+
+  const [projects, periodRows, weekRows] = await Promise.all([
+    prisma.project.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, name: true },
+    }),
+    prisma.session.findMany({
+      where: {
+        ...projectWhere,
+        // Imported sessions (Clockify etc.) carry no tokens or signals: keep the analysis to native ones.
+        source: null,
+        ...((start || end) && {
+          startedAt: { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) },
+        }),
+      },
+      orderBy: { startedAt: "asc" },
+      select,
+    }),
+    prisma.session.findMany({
+      where: { ...projectWhere, source: null, startedAt: { gte: weekStart } },
+      select,
+    }),
+  ]);
+
+  const toInsight = (row: (typeof periodRows)[number]): InsightSession => ({
+    id: row.id,
+    projectId: row.projectId,
+    projectName: row.project.name,
+    startedAt: row.startedAt.toISOString(),
+    ticketRef: row.ticketRef,
+    gitBranch: row.gitBranch,
+    taskType: effectiveTaskType(row),
+    cost: effectiveSessionCost(row, pricing),
+    promptCount: row.promptCount,
+    cacheRatio: cacheRatio(row),
+    committed: row.commitCount === null ? null : row.commitCount > 0,
+  });
+
+  const sessions = periodRows.map(toInsight);
+
+  const byType: TaskTypeStat[] = TASK_TYPES.map((taskType) => {
+    const group = sessions.filter((s) => s.taskType === taskType);
+    const prompts = meanOfKnown(group.map((s) => s.promptCount));
+    const cache = meanOfKnown(group.map((s) => s.cacheRatio));
+    return {
+      taskType,
+      sessions: group.length,
+      avgCost: group.length > 0 ? group.reduce((sum, s) => sum + s.cost, 0) / group.length : 0,
+      avgPrompts: prompts.mean,
+      promptSamples: prompts.n,
+      avgCacheRatio: cache.mean,
+      cacheSamples: cache.n,
+    };
+  }).filter((stat) => stat.sessions > 0);
+
+  const week = weekRows.map(toInsight);
+  const mostExpensive = [...week].sort((a, b) => b.cost - a.cost).slice(0, TOP_N);
+  const chattiest = week
+    .filter((s) => s.promptCount !== null && s.promptCount > 0)
+    .sort((a, b) => (b.promptCount ?? 0) - (a.promptCount ?? 0))
+    .slice(0, TOP_N);
+
+  // "Successful" = at least one commit. Sessions without a prompt count or
+  // commit signal (older collectors) can't be classified, so they are left out.
+  const successfulTrend: PromptTrendPoint[] = sessions
+    .filter((s) => s.committed === true && s.promptCount !== null)
+    .map((s) => ({
+      id: s.id,
+      date: s.startedAt.slice(0, 10),
+      prompts: s.promptCount ?? 0,
+      taskType: s.taskType,
+    }));
+
+  return {
+    currency: user.currency,
+    projectOptions: projects.map((p): ProjectOption => ({ id: p.id, name: p.name })),
+    period,
+    sessionCount: sessions.length,
+    sessionsWithSignals: sessions.filter((s) => s.promptCount !== null).length,
+    byType,
+    mostExpensive,
+    chattiest,
+    successfulTrend,
+  };
 }

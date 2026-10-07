@@ -9,6 +9,7 @@ import {
 } from "@/lib/queries";
 import { formatDuration } from "@/lib/format";
 import { formatMoney } from "@/lib/currency";
+import { effectiveTaskType } from "@/lib/task-type";
 import { PrintButton } from "@/components/print-button";
 
 const RANGE_LABEL: Record<string, string> = {
@@ -49,6 +50,7 @@ export default async function InvoicePage({
     tokensCacheCreation: s.tokensCacheCreation,
     cost: detail.sessionCost(s),
     paygCost: detail.sessionCostPaygEquivalent(s),
+    taskType: effectiveTaskType(s),
     modelCosts: null,
   }));
 

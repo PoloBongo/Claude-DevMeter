@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const BASE_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/insights", label: "Insights" },
   { href: "/import", label: "Import" },
   { href: "/settings", label: "Settings" },
 ];

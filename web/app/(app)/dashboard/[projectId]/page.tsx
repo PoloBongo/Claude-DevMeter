@@ -10,6 +10,7 @@ import {
 } from "@/lib/queries";
 import { formatDuration } from "@/lib/format";
 import { formatMoney } from "@/lib/currency";
+import { effectiveTaskType } from "@/lib/task-type";
 import { ProjectFilters } from "@/components/project-filters";
 import { ProjectClientForm } from "@/components/project-client-form";
 import { DeleteProjectButton } from "@/components/delete-project-button";
@@ -72,6 +73,7 @@ export default async function ProjectDetailPage({
     tokensCacheCreation: s.tokensCacheCreation,
     cost: detail.sessionCost(s),
     paygCost: detail.sessionCostPaygEquivalent(s),
+    taskType: effectiveTaskType(s),
     modelCosts: (() => {
       const breakdown = parseModelBreakdown(s.modelBreakdown);
       if (!breakdown || Object.keys(breakdown).length < 2) return null;

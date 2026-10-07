@@ -1,0 +1,15 @@
+-- AlterTable
+ALTER TABLE "Session" ADD COLUMN     "commitCount" INTEGER,
+ADD COLUMN     "editAccepted" INTEGER,
+ADD COLUMN     "editRejected" INTEGER,
+ADD COLUMN     "linesAdded" INTEGER,
+ADD COLUMN     "linesRemoved" INTEGER,
+ADD COLUMN     "prCount" INTEGER,
+ADD COLUMN     "promptCount" INTEGER,
+ADD COLUMN     "rating" INTEGER,
+ADD COLUMN     "ratingComment" TEXT,
+ADD COLUMN     "revertedLater" BOOLEAN,
+ADD COLUMN     "taskType" TEXT,
+ADD COLUMN     "taskTypeManual" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "toolCalls" INTEGER,
+ADD COLUMN     "toolErrors" INTEGER;
