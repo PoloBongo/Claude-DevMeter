@@ -4,6 +4,7 @@ import { sendSession } from "./api-client.ts";
 import { estimateCostUsd } from "./pricing.ts";
 import { extractTicketRef, getCurrentBranch, getProjectName, guessClientName } from "./git.ts";
 import { writeStatusEntry, removeStatusEntry } from "./status-store.ts";
+import { computeClaudeMdInfo, type ClaudeMdInfo } from "./claude-md.ts";
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -32,7 +33,22 @@ export type SignalKey =
   | "linesAdded"
   | "linesRemoved"
   | "commitCount"
-  | "prCount";
+  | "prCount"
+  | "compactionCount"
+  | "apiErrorCount"
+  | "planModeCount"
+  | "subagentRuns"
+  | "skillActivations"
+  | "peakContextTokens";
+
+/** Counters that are a real 0 (not "unknown") as soon as Claude Code's event stream is flowing. */
+const EVENT_COUNTERS: SignalKey[] = [
+  "compactionCount",
+  "apiErrorCount",
+  "planModeCount",
+  "subagentRuns",
+  "skillActivations",
+];
 
 export type Signals = Partial<Record<SignalKey, number>>;
 
@@ -44,6 +60,11 @@ export class SessionTracker {
   private startedAt: Date;
   private tokensByModel = new Map<string, TokenBucket>();
   private signals: Signals = {};
+  private effortCounts = new Map<string, number>();
+  private claudeCodeVersion: string | null = null;
+  private surveyResponse: string | null = null;
+  private claudeMd: ClaudeMdInfo | null;
+  private branchCache: { value: string | null; at: number } | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -57,6 +78,7 @@ export class SessionTracker {
     this.cwd = cwd;
     this.startedAt = new Date();
     this.onIdleFlush = onIdleFlush;
+    this.claudeMd = computeClaudeMdInfo(cwd);
     this.scheduleSync();
   }
 
@@ -78,7 +100,66 @@ export class SessionTracker {
   addSignal(key: SignalKey, value: number): void {
     if (!Number.isFinite(value) || value < 0) return;
     this.signals[key] = (this.signals[key] ?? 0) + value;
+    this.writeStatus();
     this.scheduleIdleFlush();
+  }
+
+  /** Keeps the largest value seen (for gauges like peak context size, where summing is meaningless). */
+  observeMax(key: SignalKey, value: number): void {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.signals[key] = Math.max(this.signals[key] ?? 0, value);
+  }
+
+  /**
+   * The event stream (logs) is demonstrably flowing, so event counters that
+   * simply haven't fired yet are real zeros rather than unknowns.
+   */
+  markEventsFlowing(): void {
+    for (const key of EVENT_COUNTERS) this.signals[key] ??= 0;
+  }
+
+  noteEffort(effort: string): void {
+    this.effortCounts.set(effort, (this.effortCounts.get(effort) ?? 0) + 1);
+  }
+
+  setClaudeCodeVersion(version: string | null): void {
+    if (version) this.claudeCodeVersion = version.slice(0, 40);
+  }
+
+  setSurveyResponse(response: string): void {
+    this.surveyResponse = response;
+  }
+
+  private dominantEffort(): string | undefined {
+    let best: string | undefined;
+    let bestCount = 0;
+    for (const [effort, count] of this.effortCounts) {
+      if (count > bestCount) {
+        best = effort;
+        bestCount = count;
+      }
+    }
+    return best;
+  }
+
+  /** Everything non-token that goes in the ingest payload; unknown fields are left out entirely. */
+  private signalFields() {
+    return {
+      ...this.signals,
+      ...(this.dominantEffort() && { effort: this.dominantEffort() }),
+      ...(this.claudeCodeVersion && { claudeCodeVersion: this.claudeCodeVersion }),
+      ...(this.surveyResponse && { surveyResponse: this.surveyResponse }),
+      ...(this.claudeMd && { claudeMdHash: this.claudeMd.hash, claudeMdLines: this.claudeMd.lines }),
+    };
+  }
+
+  /** `git rev-parse` per OTLP event would be wasteful; the branch rarely changes within seconds. */
+  private currentBranch(): string | null {
+    const now = Date.now();
+    if (!this.branchCache || now - this.branchCache.at > 10_000) {
+      this.branchCache = { value: getCurrentBranch(this.cwd), at: now };
+    }
+    return this.branchCache.value;
   }
 
   private modelBreakdown(): ModelBreakdown {
@@ -118,10 +199,11 @@ export class SessionTracker {
     writeStatusEntry(this.cwd, {
       sessionId: this.sessionId,
       cwd: this.cwd,
-      gitBranch: getCurrentBranch(this.cwd),
+      gitBranch: this.currentBranch(),
       startedAt: this.startedAt.toISOString(),
       updatedAt: new Date().toISOString(),
       ...totals,
+      signals: this.signals,
     });
   }
 
@@ -153,7 +235,7 @@ export class SessionTracker {
         startedAt: this.startedAt.toISOString(),
         endedAt: new Date().toISOString(),
         ...this.totals(),
-        ...this.signals,
+        ...this.signalFields(),
       });
     } catch (error) {
       console.error("Failed to sync session to DevMeter:", error);
@@ -194,6 +276,9 @@ export class SessionTracker {
 
     this.tokensByModel.clear();
     this.signals = {};
+    this.effortCounts.clear();
+    this.surveyResponse = null;
+    this.claudeMd = computeClaudeMdInfo(this.cwd);
     this.startedAt = new Date();
     // Tracker instances are reused across idle-flush cycles in `devmeter
     // start` (keyed by cwd, kept alive for the life of the collector). The

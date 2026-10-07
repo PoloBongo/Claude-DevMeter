@@ -3,9 +3,11 @@ import { SessionTracker } from "../session-tracker.ts";
 import { startOtelReceiver } from "../otel-receiver.ts";
 import { describeCodeVersion } from "../version.ts";
 import { otelEnv } from "../otel-env.ts";
+import { refreshBaselines } from "../baselines.ts";
 
 export async function startCommand(): Promise<void> {
   const config = requireConfig();
+  refreshBaselines(config);
   const fallbackCwd = process.cwd();
   const trackers = new Map<string, SessionTracker>();
 

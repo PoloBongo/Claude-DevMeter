@@ -63,6 +63,14 @@ function findAttribute(attributes: Attribute[] | undefined, key: string): string
   return null;
 }
 
+/** Short enum-like values only (an effort level, a survey rating): refuses anything that could be free text. */
+const SAFE_LABEL = /^[A-Za-z0-9_. -]{1,20}$/;
+
+function numberAttribute(attributes: Attribute[] | undefined, key: string): number {
+  const value = Number(findAttribute(attributes, key));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 interface LogRecord {
   attributes?: Attribute[];
   body?: AttributeValue;
@@ -188,14 +196,55 @@ function eventName(record: LogRecord): string | null {
  * logging elsewhere nothing of it is stored.
  */
 function handleLogRecord(record: LogRecord, tracker: SessionTracker): void {
-  switch (eventName(record)) {
+  const attrs = record.attributes;
+  const name = eventName(record);
+  if (name !== null) tracker.markEventsFlowing();
+
+  switch (name) {
     case "user_prompt":
       tracker.addSignal("promptCount", 1);
       break;
     case "tool_result":
       tracker.addSignal("toolCalls", 1);
-      tracker.addSignal("toolErrors", findAttribute(record.attributes, "success") === "false" ? 1 : 0);
+      tracker.addSignal("toolErrors", findAttribute(attrs, "success") === "false" ? 1 : 0);
       break;
+    case "api_request": {
+      // Subagent and auxiliary requests have their own, usually smaller,
+      // context: only the main conversation's size says "this session is bloated".
+      const source = findAttribute(attrs, "query_source");
+      if (source !== null && source !== "main") break;
+      const context =
+        numberAttribute(attrs, "input_tokens") +
+        numberAttribute(attrs, "cache_read_tokens") +
+        numberAttribute(attrs, "cache_creation_tokens");
+      if (context > 0) tracker.observeMax("peakContextTokens", context);
+      const effort = findAttribute(attrs, "effort");
+      if (effort && SAFE_LABEL.test(effort)) tracker.noteEffort(effort);
+      break;
+    }
+    case "api_error":
+      tracker.addSignal("apiErrorCount", 1);
+      break;
+    case "compaction":
+      if (findAttribute(attrs, "success") !== "false") tracker.addSignal("compactionCount", 1);
+      break;
+    case "permission_mode_changed":
+      if (findAttribute(attrs, "to_mode") === "plan") tracker.addSignal("planModeCount", 1);
+      break;
+    case "subagent_completed":
+      tracker.addSignal("subagentRuns", 1);
+      break;
+    case "skill_activated":
+      tracker.addSignal("skillActivations", 1);
+      break;
+    case "feedback_survey": {
+      // Only the rating the user picked in the session survey; never any text.
+      if (findAttribute(attrs, "event_type") !== "responded") break;
+      if (findAttribute(attrs, "survey_type") !== "session") break;
+      const response = findAttribute(attrs, "response");
+      if (response && SAFE_LABEL.test(response)) tracker.setSurveyResponse(response);
+      break;
+    }
   }
 }
 
@@ -219,6 +268,7 @@ export function ingestMetrics(
 ): void {
   for (const resourceMetrics of body.resourceMetrics ?? []) {
     const tracker = getTracker(resolveCwd(resourceMetrics.resource, fallbackCwd));
+    tracker.setClaudeCodeVersion(findAttribute(resourceMetrics.resource?.attributes, "service.version"));
     for (const scopeMetrics of resourceMetrics.scopeMetrics ?? []) {
       for (const metric of scopeMetrics.metrics ?? []) {
         if (metric.name === TOKEN_METRIC_NAME) {
@@ -238,6 +288,7 @@ export function ingestLogs(
 ): void {
   for (const resourceLogs of body.resourceLogs ?? []) {
     const tracker = getTracker(resolveCwd(resourceLogs.resource, fallbackCwd));
+    tracker.setClaudeCodeVersion(findAttribute(resourceLogs.resource?.attributes, "service.version"));
     for (const scopeLogs of resourceLogs.scopeLogs ?? []) {
       for (const record of scopeLogs.logRecords ?? []) {
         handleLogRecord(record, tracker);

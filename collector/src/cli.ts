@@ -8,6 +8,7 @@ import { startCommand } from "./commands/start.ts";
 import { statusCommand } from "./commands/status.ts";
 import { claudeCommand } from "./commands/claude.ts";
 import { syncCommand } from "./commands/sync.ts";
+import { statuslineCommand } from "./commands/statusline.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { version } = JSON.parse(
@@ -64,6 +65,16 @@ program
   .argument("[args...]", "arguments passed through to `claude`")
   .action((args: string[]) => {
     claudeCommand(args);
+  });
+
+program
+  .command("statusline")
+  .description(
+    "Print a one-line session coach for Claude Code's statusLine setting " +
+      '(add {"statusLine":{"type":"command","command":"devmeter statusline"}} to ~/.claude/settings.json)'
+  )
+  .action(() => {
+    void statuslineCommand();
   });
 
 program.parse();

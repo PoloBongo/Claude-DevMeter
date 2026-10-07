@@ -8,6 +8,12 @@
  */
 export function otelEnv(endpoint: string): Record<string, string> {
   return {
+    // Routes Claude Code's own "How is Claude doing this session?" rating to
+    // this receiver (it only ever reaches us, as a `feedback_survey` event).
+    // Set DEVMETER_NO_SURVEY=1 to leave the survey behaviour untouched.
+    ...(process.env.DEVMETER_NO_SURVEY
+      ? {}
+      : { CLAUDE_CODE_ENABLE_FEEDBACK_SURVEY_FOR_OTEL: "1" }),
     CLAUDE_CODE_ENABLE_TELEMETRY: "1",
     OTEL_METRICS_EXPORTER: "otlp",
     OTEL_LOGS_EXPORTER: "otlp",

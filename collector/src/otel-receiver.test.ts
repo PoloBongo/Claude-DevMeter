@@ -179,3 +179,101 @@ test("malformed log payloads don't crash the receiver", async () => {
   });
   assert.equal(posted.length, 1);
 });
+
+function eventRecord(name: string, extra: Record<string, string | number | boolean> = {}) {
+  return {
+    attributes: [
+      str("event.name", name),
+      ...Object.entries(extra).map(([key, value]) => ({
+        key,
+        value:
+          typeof value === "string"
+            ? { stringValue: value }
+            : typeof value === "boolean"
+              ? { boolValue: value }
+              : { intValue: String(value) },
+      })),
+    ],
+  };
+}
+
+test("v2 events: context peak, compactions, plan mode, subagents, skills, errors, effort, survey, version", async () => {
+  const posted = await replay(async (port) => {
+    await post(port, "/v1/metrics", {
+      resourceMetrics: [
+        {
+          resource: { attributes: [str("service.version", "2.1.300")] },
+          scopeMetrics: [{ metrics: [tokenMetric] }],
+        },
+      ],
+    });
+    await post(
+      port,
+      "/v1/logs",
+      logsPayload([
+        eventRecord("user_prompt", { prompt_length: 40 }),
+        // main requests: context = input + cache_read + cache_creation
+        eventRecord("api_request", { query_source: "main", input_tokens: 100, cache_read_tokens: 4000, cache_creation_tokens: 900, effort: "high" }),
+        eventRecord("api_request", { query_source: "main", input_tokens: 50, cache_read_tokens: 9000, cache_creation_tokens: 0, effort: "high" }),
+        eventRecord("api_request", { query_source: "main", input_tokens: 10, cache_read_tokens: 100, cache_creation_tokens: 0, effort: "low" }),
+        // a subagent's bigger request must not move the main-context peak
+        eventRecord("api_request", { query_source: "subagent", input_tokens: 90000, cache_read_tokens: 0, cache_creation_tokens: 0, effort: "max" }),
+        eventRecord("api_error", { status_code: 529 }),
+        eventRecord("compaction", { trigger: "auto", success: "true", pre_tokens: 150000 }),
+        eventRecord("compaction", { trigger: "auto", success: "false" }),
+        eventRecord("permission_mode_changed", { from_mode: "default", to_mode: "plan" }),
+        eventRecord("permission_mode_changed", { from_mode: "plan", to_mode: "default" }),
+        eventRecord("subagent_completed", { agent_type: "Explore" }),
+        eventRecord("skill_activated", { invocation_trigger: "user-slash" }),
+        eventRecord("feedback_survey", { event_type: "appeared", survey_type: "session" }),
+        eventRecord("feedback_survey", { event_type: "responded", survey_type: "session", response: "good" }),
+      ])
+    );
+  });
+
+  const body = posted[0];
+  assert.equal(body.peakContextTokens, 9050);
+  assert.equal(body.effort, "high");
+  assert.equal(body.apiErrorCount, 1);
+  assert.equal(body.compactionCount, 1);
+  assert.equal(body.planModeCount, 1);
+  assert.equal(body.subagentRuns, 1);
+  assert.equal(body.skillActivations, 1);
+  assert.equal(body.surveyResponse, "good");
+  assert.equal(body.claudeCodeVersion, "2.1.300");
+});
+
+test("once events flow, event counters that never fired are reported as 0; before that they are omitted", async () => {
+  const withEvents = await replay(async (port) => {
+    await post(port, "/v1/metrics", metricsPayload([tokenMetric]));
+    await post(port, "/v1/logs", logsPayload([eventRecord("user_prompt")]));
+  });
+  for (const key of ["compactionCount", "apiErrorCount", "planModeCount", "subagentRuns", "skillActivations"]) {
+    assert.equal(withEvents[0][key], 0, `${key} should be a real 0`);
+  }
+
+  const metricsOnly = await replay(async (port) => {
+    await post(port, "/v1/metrics", metricsPayload([tokenMetric]));
+  });
+  for (const key of ["compactionCount", "planModeCount", "peakContextTokens", "effort", "surveyResponse"]) {
+    assert.equal(key in metricsOnly[0], false, `${key} should be omitted without events`);
+  }
+});
+
+test("survey answers that look like free text are dropped", async () => {
+  const posted = await replay(async (port) => {
+    await post(port, "/v1/metrics", metricsPayload([tokenMetric]));
+    await post(
+      port,
+      "/v1/logs",
+      logsPayload([
+        eventRecord("feedback_survey", {
+          event_type: "responded",
+          survey_type: "session",
+          response: "this was a really long free text answer that is not a rating",
+        }),
+      ])
+    );
+  });
+  assert.equal("surveyResponse" in posted[0], false);
+});

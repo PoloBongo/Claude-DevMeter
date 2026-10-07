@@ -5,6 +5,7 @@ import { SessionTracker } from "../session-tracker.ts";
 import { startOtelReceiver } from "../otel-receiver.ts";
 import { describeCodeVersion } from "../version.ts";
 import { otelEnv } from "../otel-env.ts";
+import { refreshBaselines } from "../baselines.ts";
 
 /**
  * Claude Code does not propagate OTEL_RESOURCE_ATTRIBUTES into its OTLP
@@ -18,6 +19,7 @@ import { otelEnv } from "../otel-env.ts";
 export function claudeCommand(args: string[]): void {
   const config = requireConfig();
   const cwd = process.cwd();
+  refreshBaselines(config);
   const tracker = new SessionTracker(config, cwd);
 
   const server = startOtelReceiver(() => tracker, cwd, 0);

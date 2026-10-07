@@ -26,6 +26,37 @@ export interface IngestPayload {
   linesRemoved?: number;
   commitCount?: number;
   prCount?: number;
+  compactionCount?: number;
+  apiErrorCount?: number;
+  planModeCount?: number;
+  subagentRuns?: number;
+  skillActivations?: number;
+  /** Largest main-conversation context seen: input + cache read + cache creation tokens of one request. */
+  peakContextTokens?: number;
+  /** Most-used reasoning effort across the session's main requests. */
+  effort?: string;
+  claudeCodeVersion?: string;
+  claudeMdHash?: string;
+  claudeMdLines?: number;
+  /** The user's answer to Claude Code's "How is Claude doing?" survey, as reported. */
+  surveyResponse?: string;
+}
+
+export interface Baseline {
+  taskType: string;
+  n: number;
+  medianCostUsd: number | null;
+  medianPrompts: number | null;
+}
+
+export async function fetchBaselines(config: DevMeterConfig): Promise<Baseline[]> {
+  const res = await fetch(`${config.apiUrl}/api/baselines`, {
+    headers: { Authorization: `Bearer ${config.apiKey}` },
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!res.ok) throw new Error(`Baselines fetch failed (${res.status})`);
+  const body = (await res.json()) as { baselines?: Baseline[] };
+  return body.baselines ?? [];
 }
 
 export async function sendSession(

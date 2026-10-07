@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { STATUS_PATH, CONFIG_DIR } from "./config.ts";
-import type { ModelBreakdown } from "./session-tracker.ts";
+import type { ModelBreakdown, Signals } from "./session-tracker.ts";
 
 export interface StatusEntry {
   sessionId: string;
@@ -14,6 +14,8 @@ export interface StatusEntry {
   tokensCacheCreation: number;
   estimatedCostUsd: number;
   modelBreakdown: ModelBreakdown;
+  /** Live friction/outcome counters, read by `devmeter statusline`. */
+  signals?: Signals;
 }
 
 type StatusMap = Record<string, StatusEntry>;
@@ -46,4 +48,15 @@ export function removeStatusEntry(cwd: string): void {
 
 export function readAllStatusEntries(): StatusEntry[] {
   return Object.values(readAll());
+}
+
+/** Windows hands out `C:\x\y` and `C:/x/y` for the same folder depending on who asks; compare them in one canonical form. */
+function normalizeCwd(cwd: string): string {
+  return cwd.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/** The in-progress session for a directory, if any (path-separator and case insensitive). */
+export function findStatusEntry(cwd: string): StatusEntry | null {
+  const wanted = normalizeCwd(cwd);
+  return readAllStatusEntries().find((entry) => normalizeCwd(entry.cwd) === wanted) ?? null;
 }
