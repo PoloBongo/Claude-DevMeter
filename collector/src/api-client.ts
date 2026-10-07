@@ -15,6 +15,17 @@ export interface IngestPayload {
   tokensCacheCreation: number;
   estimatedCostUsd: number;
   modelBreakdown: ModelBreakdown;
+  // Friction / outcome counters. Each is omitted until Claude Code actually
+  // reported that signal, so "unknown" never gets sent as a misleading 0.
+  promptCount?: number;
+  editAccepted?: number;
+  editRejected?: number;
+  toolCalls?: number;
+  toolErrors?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  commitCount?: number;
+  prCount?: number;
 }
 
 export async function sendSession(

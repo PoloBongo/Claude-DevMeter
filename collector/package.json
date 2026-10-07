@@ -1,6 +1,6 @@
 {
   "name": "devmeter-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local collector that tracks Claude Code time and AI token cost per project and reports it to a DevMeter dashboard.",
   "type": "module",
   "bin": {

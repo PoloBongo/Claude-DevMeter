@@ -2,6 +2,7 @@ import { requireConfig } from "../config.ts";
 import { SessionTracker } from "../session-tracker.ts";
 import { startOtelReceiver } from "../otel-receiver.ts";
 import { describeCodeVersion } from "../version.ts";
+import { otelEnv } from "../otel-env.ts";
 
 export async function startCommand(): Promise<void> {
   const config = requireConfig();
@@ -21,14 +22,7 @@ export async function startCommand(): Promise<void> {
 
   const server = startOtelReceiver(getTracker, fallbackCwd);
 
-  const otelVars: Record<string, string> = {
-    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
-    OTEL_METRICS_EXPORTER: "otlp",
-    OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
-    OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318",
-    OTEL_METRIC_EXPORT_INTERVAL: "10000",
-    OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "delta",
-  };
+  const otelVars = otelEnv("http://localhost:4318");
 
   console.log("DevMeter collector listening on http://localhost:4318");
   console.log(

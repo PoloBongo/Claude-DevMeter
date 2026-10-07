@@ -4,6 +4,7 @@ import { requireConfig } from "../config.ts";
 import { SessionTracker } from "../session-tracker.ts";
 import { startOtelReceiver } from "../otel-receiver.ts";
 import { describeCodeVersion } from "../version.ts";
+import { otelEnv } from "../otel-env.ts";
 
 /**
  * Claude Code does not propagate OTEL_RESOURCE_ATTRIBUTES into its OTLP
@@ -27,12 +28,7 @@ export function claudeCommand(args: string[]): void {
 
     const env = {
       ...process.env,
-      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
-      OTEL_METRICS_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
-      OTEL_EXPORTER_OTLP_ENDPOINT: `http://localhost:${port}`,
-      OTEL_METRIC_EXPORT_INTERVAL: "10000",
-      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "delta",
+      ...otelEnv(`http://localhost:${port}`),
     };
 
     const child = spawn("claude", args, {

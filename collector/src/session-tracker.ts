@@ -22,6 +22,20 @@ export type ModelBreakdown = Record<
   TokenBucket & { costUsd: number }
 >;
 
+/** Counter names — same keys as the ingest payload fields. */
+export type SignalKey =
+  | "promptCount"
+  | "editAccepted"
+  | "editRejected"
+  | "toolCalls"
+  | "toolErrors"
+  | "linesAdded"
+  | "linesRemoved"
+  | "commitCount"
+  | "prCount";
+
+export type Signals = Partial<Record<SignalKey, number>>;
+
 export class SessionTracker {
   private sessionId: string;
   private readonly cwd: string;
@@ -29,6 +43,7 @@ export class SessionTracker {
   private readonly onIdleFlush?: (cwd: string) => void;
   private startedAt: Date;
   private tokensByModel = new Map<string, TokenBucket>();
+  private signals: Signals = {};
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -52,6 +67,17 @@ export class SessionTracker {
     bucket[kind] += value;
     this.tokensByModel.set(model, bucket);
     this.writeStatus();
+    this.scheduleIdleFlush();
+  }
+
+  /**
+   * Adds to a friction/outcome counter. `value` may be 0 — that records "the
+   * signal exists and is zero" (e.g. tool calls happened, none failed),
+   * which is different from never having heard of it (field omitted).
+   */
+  addSignal(key: SignalKey, value: number): void {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.signals[key] = (this.signals[key] ?? 0) + value;
     this.scheduleIdleFlush();
   }
 
@@ -127,6 +153,7 @@ export class SessionTracker {
         startedAt: this.startedAt.toISOString(),
         endedAt: new Date().toISOString(),
         ...this.totals(),
+        ...this.signals,
       });
     } catch (error) {
       console.error("Failed to sync session to DevMeter:", error);
@@ -166,6 +193,7 @@ export class SessionTracker {
     await this.sync();
 
     this.tokensByModel.clear();
+    this.signals = {};
     this.startedAt = new Date();
     // Tracker instances are reused across idle-flush cycles in `devmeter
     // start` (keyed by cwd, kept alive for the life of the collector). The
