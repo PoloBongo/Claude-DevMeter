@@ -118,6 +118,25 @@ model Session {
   /// Manual: the work was reverted later.
   revertedLater       Boolean?
 
+  // --- Telemetry v2 (collector >= 0.2.0). Same rule: null = not reported.
+  claudeCodeVersion   String?
+  /// Fingerprint (12 hex chars) of the project's CLAUDE.md when the session ran; never its content.
+  claudeMdHash        String?
+  claudeMdLines       Int?
+  /// Most-used reasoning effort of the main conversation: low | medium | high | xhigh | max.
+  effort              String?
+  compactionCount     Int?
+  /// Largest main-conversation context (input + cache read + cache creation tokens of one request).
+  peakContextTokens   Int?
+  apiErrorCount       Int?
+  planModeCount       Int?
+  subagentRuns        Int?
+  skillActivations    Int?
+  /// The rating picked in Claude Code's own "How is Claude doing?" survey, as reported.
+  surveyResponse      String?
+  /// Free-form label set by hand (e.g. a prompt style or experiment arm).
+  tag                 String?
+
   // Composite index covers plain projectId lookups too (leftmost prefix),
   // so it replaces the old standalone @@index([projectId]).
   @@index([projectId, startedAt])

@@ -10,6 +10,16 @@ export function cacheRatio(tokens: {
   return denominator > 0 ? tokens.tokensCacheRead / denominator : null;
 }
 
+/** Median of the finite numbers, or null when there are none. */
+export function median(values: (number | null | undefined)[]): number | null {
+  const sorted = values
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 /** Mean of the non-null values, or null when there are none — missing data is excluded, never counted as 0. */
 export function meanOfKnown(values: (number | null | undefined)[]): { mean: number | null; n: number } {
   const known = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));

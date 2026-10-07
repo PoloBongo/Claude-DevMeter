@@ -101,6 +101,17 @@ export default async function InsightsPage({
 
   const missingSignals = data.sessionCount - data.sessionsWithSignals;
 
+  // Same filters as the page, so the export matches what is on screen.
+  const exportParams = new URLSearchParams();
+  if (project) exportParams.set("project", project);
+  exportParams.set("period", normalizedPeriod);
+  if (normalizedPeriod === "custom") {
+    exportParams.set("from", formatDateLocal(customFrom));
+    exportParams.set("to", formatDateLocal(customTo));
+  }
+  const exportHref = (format: "csv" | "json") =>
+    `/api/export?${new URLSearchParams([...exportParams, ["format", format]]).toString()}`;
+
   return (
     <div className="mx-auto w-full max-w-5xl px-7 py-8">
       <div className="mb-6.5">
@@ -110,7 +121,7 @@ export default async function InsightsPage({
         </p>
       </div>
 
-      <div className="mb-5">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <DashboardFilters
           projects={data.projectOptions}
           clients={[]}
@@ -118,6 +129,20 @@ export default async function InsightsPage({
           defaultFrom={formatDateLocal(customFrom)}
           defaultTo={formatDateLocal(customTo)}
         />
+        <div className="flex items-center gap-2">
+          <a
+            href={exportHref("csv")}
+            className="rounded-lg border border-border px-3.5 py-2 text-[13px] text-foreground hover:bg-overlay-hover"
+          >
+            Export CSV
+          </a>
+          <a
+            href={exportHref("json")}
+            className="rounded-lg border border-border px-3.5 py-2 text-[13px] text-foreground hover:bg-overlay-hover"
+          >
+            Export JSON
+          </a>
+        </div>
       </div>
 
       {missingSignals > 0 && (

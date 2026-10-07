@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import type { PricingMode, Session } from "@/generated/prisma/client";
 import { convertFromUsd, getUsdToEurRate, type Currency } from "@/lib/currency";
 import { IMPORT_TEMPLATES } from "@/lib/imports";
-import { cacheRatio, meanOfKnown } from "@/lib/session-metrics";
+import { cacheRatio, meanOfKnown, median } from "@/lib/session-metrics";
 import { effectiveTaskType, TASK_TYPES, type TaskType } from "@/lib/task-type";
 
 export type DashboardPeriod = "month" | "7" | "30" | "all" | "custom";
@@ -867,4 +867,104 @@ export async function getInsightsData(userId: string, filter?: InsightsFilter) {
     chattiest,
     successfulTrend,
   };
+}
+
+export type Baseline = {
+  taskType: TaskType;
+  /** Sessions of this type in the window. Below ~5 a median is noise and the statusline ignores it. */
+  n: number;
+  medianCostUsd: number | null;
+  /** Null unless at least 5 of those sessions reported a prompt count. */
+  medianPrompts: number | null;
+};
+
+const BASELINE_DAYS = 90;
+const BASELINE_MIN_PROMPT_SAMPLES = 5;
+
+/** Per-task-type medians over the last 90 days of native sessions, for the CLI statusline (USD, no currency conversion). */
+export async function getBaselines(userId: string): Promise<Baseline[]> {
+  const since = new Date();
+  since.setDate(since.getDate() - BASELINE_DAYS);
+  const rows = await prisma.session.findMany({
+    where: { project: { userId }, source: null, startedAt: { gte: since } },
+    orderBy: { startedAt: "desc" },
+    take: 5000,
+    select: { gitBranch: true, taskType: true, estimatedCostUsd: true, promptCount: true },
+  });
+
+  return TASK_TYPES.flatMap((taskType) => {
+    const group = rows.filter((row) => effectiveTaskType(row) === taskType);
+    if (group.length === 0) return [];
+    const prompts = group.map((row) => row.promptCount).filter((v): v is number => v !== null);
+    return [
+      {
+        taskType,
+        n: group.length,
+        medianCostUsd: median(group.map((row) => Number(row.estimatedCostUsd))),
+        medianPrompts: prompts.length >= BASELINE_MIN_PROMPT_SAMPLES ? median(prompts) : null,
+      },
+    ];
+  });
+}
+
+/** One flat row per session for CSV/JSON export, in the user's display currency. */
+export async function getExportRows(userId: string, filter?: InsightsFilter) {
+  const { pricing } = await getPricingContext(userId);
+  const period = filter?.period ?? "all";
+  const { start, end } = resolvePeriodRange(period, filter?.customFrom, filter?.customTo);
+
+  const sessions = await prisma.session.findMany({
+    where: {
+      project: { userId },
+      ...(filter?.projectId ? { projectId: filter.projectId } : {}),
+      ...((start || end) && {
+        startedAt: { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) },
+      }),
+    },
+    orderBy: { startedAt: "asc" },
+    include: { project: { select: { name: true } } },
+    take: 20000,
+  });
+
+  return sessions.map((s) => ({
+    id: s.id,
+    project: s.project.name,
+    startedAt: s.startedAt.toISOString(),
+    durationMinutes: Math.round(sessionMinutes(s) * 10) / 10,
+    gitBranch: s.gitBranch,
+    ticketRef: s.ticketRef,
+    taskType: effectiveTaskType(s),
+    currency: pricing.currency,
+    cost: Math.round(effectiveSessionCost(s, pricing) * 10000) / 10000,
+    costUsd: Number(s.estimatedCostUsd),
+    tokensInput: s.tokensInput,
+    tokensOutput: s.tokensOutput,
+    tokensCacheRead: s.tokensCacheRead,
+    tokensCacheCreation: s.tokensCacheCreation,
+    cacheRatio: cacheRatio(s),
+    promptCount: s.promptCount,
+    editAccepted: s.editAccepted,
+    editRejected: s.editRejected,
+    toolCalls: s.toolCalls,
+    toolErrors: s.toolErrors,
+    linesAdded: s.linesAdded,
+    linesRemoved: s.linesRemoved,
+    commitCount: s.commitCount,
+    prCount: s.prCount,
+    compactionCount: s.compactionCount,
+    peakContextTokens: s.peakContextTokens,
+    apiErrorCount: s.apiErrorCount,
+    planModeCount: s.planModeCount,
+    subagentRuns: s.subagentRuns,
+    skillActivations: s.skillActivations,
+    effort: s.effort,
+    claudeCodeVersion: s.claudeCodeVersion,
+    claudeMdHash: s.claudeMdHash,
+    claudeMdLines: s.claudeMdLines,
+    surveyResponse: s.surveyResponse,
+    rating: s.rating,
+    revertedLater: s.revertedLater,
+    tag: s.tag,
+    ratingComment: s.ratingComment,
+  }));
 }

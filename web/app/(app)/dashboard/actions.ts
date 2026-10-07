@@ -121,6 +121,7 @@ const reviewSessionSchema = z.object({
   rating: z.string().max(2),
   ratingComment: z.string().trim().max(280),
   revertedLater: z.string().max(10),
+  tag: z.string().trim().max(40),
 });
 
 /**
@@ -140,6 +141,7 @@ export async function reviewSessionAction(formData: FormData) {
     rating: formData.get("rating") ?? "",
     ratingComment: formData.get("ratingComment") ?? "",
     revertedLater: formData.get("revertedLater") ?? "",
+    tag: formData.get("tag") ?? "",
   });
   if (!parsed.success) return;
   const input = parsed.data;
@@ -166,6 +168,7 @@ export async function reviewSessionAction(formData: FormData) {
       rating,
       ratingComment: input.ratingComment || null,
       revertedLater: input.revertedLater === "on" ? true : null,
+      tag: input.tag || null,
     },
   });
 

@@ -16,6 +16,7 @@ export function SessionReviewForm({
   rating,
   ratingComment,
   revertedLater,
+  tag,
 }: {
   sessionId: string;
   taskType: string;
@@ -25,6 +26,7 @@ export function SessionReviewForm({
   rating: number | null;
   ratingComment: string | null;
   revertedLater: boolean | null;
+  tag: string | null;
 }) {
   const toast = useToast();
 
@@ -78,6 +80,17 @@ export function SessionReviewForm({
           maxLength={280}
           rows={3}
           placeholder="Short note (280 characters max)"
+          className={FIELD}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1.5 text-xs text-muted">
+        Tag
+        <input
+          name="tag"
+          defaultValue={tag ?? ""}
+          maxLength={40}
+          placeholder="e.g. prompt style, experiment arm"
           className={FIELD}
         />
       </label>

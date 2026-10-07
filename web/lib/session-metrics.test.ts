@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cacheRatio, meanOfKnown } from "./session-metrics.ts";
+import { cacheRatio, meanOfKnown, median } from "./session-metrics.ts";
 import { deriveTaskType, effectiveTaskType } from "./task-type.ts";
 
 test("cacheRatio = cacheRead / (input + cacheRead + cacheCreation)", () => {
@@ -19,6 +19,13 @@ test("meanOfKnown ignores missing values instead of treating them as 0", () => {
   assert.deepEqual(meanOfKnown([10, null, 20, undefined]), { mean: 15, n: 2 });
   assert.deepEqual(meanOfKnown([null, undefined]), { mean: null, n: 0 });
   assert.deepEqual(meanOfKnown([0, 0]), { mean: 0, n: 2 });
+});
+
+test("median handles odd, even, empty and ignores missing values", () => {
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([4, 1, 3, 2]), 2.5);
+  assert.equal(median([null, undefined]), null);
+  assert.equal(median([5, null, 1]), 3);
 });
 
 test("deriveTaskType maps branch prefixes", () => {

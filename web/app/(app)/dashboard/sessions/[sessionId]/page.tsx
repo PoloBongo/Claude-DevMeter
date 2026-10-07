@@ -140,6 +140,34 @@ export default async function SessionDetailPage({
           </div>
 
           <div>
+            <h2 className="mb-2.5 text-[13.5px] font-medium text-foreground-secondary">Context & model</h2>
+            <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
+              <Stat
+                label="Peak context"
+                value={count(session.peakContextTokens)}
+                hint="tokens in one request"
+              />
+              <Stat label="Compactions" value={count(session.compactionCount)} />
+              <Stat label="Effort" value={session.effort ?? "—"} />
+              <Stat label="Plan mode" value={count(session.planModeCount)} hint="times entered" />
+              <Stat label="Subagent runs" value={count(session.subagentRuns)} />
+              <Stat label="Skills used" value={count(session.skillActivations)} />
+              <Stat label="API errors" value={count(session.apiErrorCount)} />
+              <Stat
+                label="CLAUDE.md"
+                value={session.claudeMdHash ?? "—"}
+                hint={
+                  session.claudeMdLines !== null
+                    ? `${session.claudeMdLines} lines${session.claudeCodeVersion ? ` · Claude Code ${session.claudeCodeVersion}` : ""}`
+                    : session.claudeCodeVersion
+                      ? `Claude Code ${session.claudeCodeVersion}`
+                      : undefined
+                }
+              />
+            </div>
+          </div>
+
+          <div>
             <h2 className="mb-2.5 text-[13.5px] font-medium text-foreground-secondary">Outcome</h2>
             <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
               <Stat label="Ended in a commit" value={committed} />
@@ -150,6 +178,7 @@ export default async function SessionDetailPage({
                 value={session.rating === null ? "—" : `${session.rating} / 5`}
                 hint={session.revertedLater ? "Reverted later" : undefined}
               />
+              <Stat label="Claude survey" value={session.surveyResponse ?? "—"} hint="Claude Code's own rating" />
             </div>
           </div>
         </div>
@@ -164,6 +193,7 @@ export default async function SessionDetailPage({
             rating={session.rating}
             ratingComment={session.ratingComment}
             revertedLater={session.revertedLater}
+            tag={session.tag}
           />
         </div>
       </div>

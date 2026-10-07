@@ -38,6 +38,18 @@ const ingestSchema = z.object({
   linesRemoved: z.number().int().min(0).optional(),
   commitCount: z.number().int().min(0).optional(),
   prCount: z.number().int().min(0).optional(),
+  // Telemetry v2 (collector >= 0.2.0).
+  compactionCount: z.number().int().min(0).optional(),
+  apiErrorCount: z.number().int().min(0).optional(),
+  planModeCount: z.number().int().min(0).optional(),
+  subagentRuns: z.number().int().min(0).optional(),
+  skillActivations: z.number().int().min(0).optional(),
+  peakContextTokens: z.number().int().min(0).max(2_000_000_000).optional(),
+  effort: z.string().trim().max(20).optional(),
+  claudeCodeVersion: z.string().trim().max(40).optional(),
+  claudeMdHash: z.string().trim().max(64).optional(),
+  claudeMdLines: z.number().int().min(0).optional(),
+  surveyResponse: z.string().trim().max(20).optional(),
 });
 
 function extractApiKey(request: Request): string | null {
@@ -112,6 +124,17 @@ export async function POST(request: Request) {
     linesRemoved: data.linesRemoved,
     commitCount: data.commitCount,
     prCount: data.prCount,
+    compactionCount: data.compactionCount,
+    apiErrorCount: data.apiErrorCount,
+    planModeCount: data.planModeCount,
+    subagentRuns: data.subagentRuns,
+    skillActivations: data.skillActivations,
+    peakContextTokens: data.peakContextTokens,
+    effort: data.effort,
+    claudeCodeVersion: data.claudeCodeVersion,
+    claudeMdHash: data.claudeMdHash,
+    claudeMdLines: data.claudeMdLines,
+    surveyResponse: data.surveyResponse,
   };
   const derivedTaskType = deriveTaskType(data.gitBranch);
 

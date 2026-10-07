@@ -154,6 +154,25 @@ it (`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` = `otlp`):
 | `/v1/logs` | `user_prompt` event | `promptCount` |
 | `/v1/logs` | `tool_result` event (`success`) | `toolCalls`, `toolErrors` |
 
+Collector 0.2.0 adds more event-based signals (all counters or short labels):
+
+| Event | Used for |
+|---|---|
+| `api_request` (main conversation only) | `peakContextTokens` (largest input + cache read + cache creation of one request), `effort` (most-used level) |
+| `compaction` | `compactionCount` |
+| `api_error` | `apiErrorCount` |
+| `permission_mode_changed` (`to_mode` = `plan`) | `planModeCount` |
+| `subagent_completed`, `skill_activated` | `subagentRuns`, `skillActivations` |
+| `feedback_survey` (`responded`, session survey) | `surveyResponse` — Claude Code's own "How is Claude doing?" rating |
+
+Also recorded per session: `claudeCodeVersion` (from the OTLP resource) and
+`claudeMdHash` / `claudeMdLines` — a 12-character fingerprint and line count of
+the project's `CLAUDE.md`, never its text. The survey rating is routed to the
+collector via `CLAUDE_CODE_ENABLE_FEEDBACK_SURVEY_FOR_OTEL=1`; set
+`DEVMETER_NO_SURVEY=1` to leave that untouched. Event counters such as
+compactions are `0` (not unknown) once the event stream is flowing, and
+omitted before that.
+
 **Privacy:** only counters and metadata are stored. The receiver reads
 `event.name` and `success` from log events and nothing else; prompt text and
 tool inputs/outputs are never read or sent, and DevMeter does not enable
@@ -168,6 +187,31 @@ flushed.
 After upgrading the collector (`npm install -g devmeter-cli`), restart any
 `devmeter start` / `devmeter claude` sessions that were already running — they
 keep the code they started with.
+
+### Statusline coach
+
+`devmeter statusline` prints a one-line coach inside Claude Code, e.g.
+`ctx 62% | cache 91% | 4 prompts, 1 commit (med 6) | $1.80 (med feature $2.40)`.
+It flags (`!`) a context above 80%, a cold prompt cache, many prompts without a
+commit, or a cost above twice the median for the branch's task type. Enable it
+in `~/.claude/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "devmeter statusline" } }
+```
+
+It does no network I/O (a slow statusline script stalls the UI): live counters
+come from the running `devmeter claude`/`start` process, and the per-task-type
+medians (`GET /api/baselines`, last 90 days) are cached in
+`~/.devmeter/baselines.json`, refreshed at most once a day at launch. A task
+type needs at least 5 sessions before its median is shown.
+
+### Export
+
+**Export CSV / Export JSON** on the Insights page download every session
+(one flat row each, including all the signals above, your rating, tag and
+comment) with the page's project/period filters. Text cells are neutralized
+against spreadsheet formula injection. API: `GET /api/export?format=csv|json&project=&period=`.
 
 ### Insights
 
@@ -195,6 +239,10 @@ a 1–5 rating, a short comment and a "reverted later" flag.
   - Outcome: `commitCount`, `prCount` (a session "ended in a commit" when
     `commitCount > 0`), and manual `rating` (1–5), `ratingComment`,
     `revertedLater`.
+  - Telemetry v2: `compactionCount`, `peakContextTokens`, `apiErrorCount`,
+    `planModeCount`, `subagentRuns`, `skillActivations`, `effort`,
+    `claudeCodeVersion`, `claudeMdHash`, `claudeMdLines`, `surveyResponse`;
+    and a manual free-form `tag`.
   - Cache ratio is computed on read, not stored:
     `cacheRead / (input + cacheRead + cacheCreation)`.
 
