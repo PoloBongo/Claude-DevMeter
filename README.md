@@ -206,6 +206,33 @@ medians (`GET /api/baselines`, last 90 days) are cached in
 `~/.devmeter/baselines.json`, refreshed at most once a day at launch. A task
 type needs at least 5 sessions before its median is shown.
 
+### Diagnostics
+
+Each session page has a **Diagnostics** panel, and Insights has a **What is
+costing you** card (how many of the period's sessions with telemetry hit each
+rule). They are computed on read from the counters above: nothing extra is
+stored and no migration is involved. A rule is skipped when the data it needs
+is missing, so older sessions never produce false findings. Each finding shows
+its evidence and links to the matching Claude Code docs.
+
+| Rule | Fires when |
+|---|---|
+| CLAUDE.md is long | more than 200 lines (the docs' guidance) |
+| Very large context | peak context ≥ your own 90th percentile (floored at 80k; 150k until you have 10 sessions of history) — indicative |
+| Repeated compactions | 2 or more |
+| Low prompt-cache share | cache ratio under 50% on ≥ 50k input-side tokens (softened if compactions explain it) |
+| Many prompts, no commit | prompts ≥ 2× the task-type median (min. 8), or 15 without a baseline |
+| Cost well above normal | ≥ 2× the task-type median cost |
+| Many rejected edits | ≥ 30% of at least 5 edit decisions rejected |
+| Lots of failing tool calls | ≥ 20% of at least 10 tool calls failed |
+| High effort on a short session | effort `xhigh`/`max` with ≤ 3 prompts |
+| Opus on a small task | ≥ 80% of cost on Opus, ≤ 3 prompts, < 50 lines changed |
+| API errors | 3 or more failed requests |
+
+Task-type medians need at least 5 sessions of that type (last 90 days). Not
+covered, because Claude Code does not report it: "several unrelated tasks
+without /clear" and "MCP server connected but never used".
+
 ### Export
 
 **Export CSV / Export JSON** on the Insights page download every session

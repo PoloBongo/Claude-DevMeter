@@ -76,6 +76,42 @@ export default async function SessionDetailPage({
         </div>
       </div>
 
+      <div className="mb-5.5 rounded-xl border border-border bg-surface px-5 py-4">
+        <h2 className="mb-2.5 text-[13.5px] font-medium text-foreground-secondary">Diagnostics</h2>
+        {detail.diagnostics.length === 0 ? (
+          <p className="text-[13px] text-muted">
+            {session.promptCount === null
+              ? "No telemetry recorded for this session (older collector), so there is nothing to diagnose."
+              : "Nothing stands out: no rule fired for this session."}
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {detail.diagnostics.map((d) => (
+              <li key={d.id} className="flex gap-3">
+                <span
+                  className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${d.severity === "warn" ? "bg-accent" : "bg-dim"}`}
+                  aria-label={d.severity === "warn" ? "Worth a look" : "For information"}
+                />
+                <div className="text-[13px]">
+                  <div className="font-medium">
+                    {d.title} <span className="font-mono text-[11.5px] font-normal text-dim">· {d.evidence}</span>
+                  </div>
+                  <p className="mt-0.5 text-muted">{d.detail}</p>
+                  <a
+                    href={d.docUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] text-dim underline hover:text-foreground"
+                  >
+                    Claude Code docs
+                  </a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-5">
           <div>

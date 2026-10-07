@@ -5,6 +5,14 @@ import { convertFromUsd, getUsdToEurRate, type Currency } from "@/lib/currency";
 import { IMPORT_TEMPLATES } from "@/lib/imports";
 import { cacheRatio, meanOfKnown, median } from "@/lib/session-metrics";
 import { effectiveTaskType, TASK_TYPES, type TaskType } from "@/lib/task-type";
+import {
+  diagnose,
+  peakContextThresholdFor,
+  type Diagnostic,
+  type DiagnosticContext,
+  type DiagnosticId,
+  type DiagnosticInput,
+} from "@/lib/diagnostics";
 
 export type DashboardPeriod = "month" | "7" | "30" | "all" | "custom";
 
@@ -692,14 +700,16 @@ async function getPricingContext(userId: string) {
 
 /** One session (owner-checked) with its project, for the detail page. */
 export async function getSessionDetail(userId: string, sessionId: string) {
-  const [session, { user, pricing }] = await Promise.all([
+  const [session, { user, pricing }, history] = await Promise.all([
     prisma.session.findFirst({
       where: { id: sessionId, project: { userId } },
       include: { project: { select: { id: true, name: true } } },
     }),
     getPricingContext(userId),
+    getHistoryStats(userId),
   ]);
   if (!session) return null;
+  const taskType = effectiveTaskType(session);
 
   return {
     session,
@@ -709,7 +719,8 @@ export async function getSessionDetail(userId: string, sessionId: string) {
     paygCost: convertFromUsd(paygEquivalentUsd(session), pricing.currency, pricing.usdToEurRate),
     durationMinutes: sessionMinutes(session),
     cacheRatio: cacheRatio(session),
-    taskType: effectiveTaskType(session),
+    taskType,
+    diagnostics: diagnose(toDiagnosticInput(session), diagnosticContext(history, taskType)),
   };
 }
 
@@ -777,13 +788,25 @@ export async function getInsightsData(userId: string, filter?: InsightsFilter) {
     estimatedCostUsd: true,
     promptCount: true,
     commitCount: true,
+    claudeMdLines: true,
+    peakContextTokens: true,
+    compactionCount: true,
+    editAccepted: true,
+    editRejected: true,
+    toolCalls: true,
+    toolErrors: true,
+    apiErrorCount: true,
+    effort: true,
+    linesAdded: true,
+    linesRemoved: true,
+    modelBreakdown: true,
   } as const;
   const projectWhere = {
     project: { userId },
     ...(filter?.projectId ? { projectId: filter.projectId } : {}),
   };
 
-  const [projects, periodRows, weekRows] = await Promise.all([
+  const [projects, periodRows, weekRows, history] = await Promise.all([
     prisma.project.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -805,7 +828,34 @@ export async function getInsightsData(userId: string, filter?: InsightsFilter) {
       where: { ...projectWhere, source: null, startedAt: { gte: weekStart } },
       select,
     }),
+    getHistoryStats(userId),
   ]);
+
+  // Diagnostics only make sense for sessions that carry telemetry, so the
+  // denominator is "sessions with telemetry", not every session in the period.
+  const withTelemetry = periodRows.filter((row) => row.promptCount !== null);
+  const diagnosticCounts = new Map<DiagnosticId, { diagnostic: Diagnostic; sessions: number }>();
+  for (const row of withTelemetry) {
+    const found = diagnose(
+      toDiagnosticInput(row),
+      diagnosticContext(history, effectiveTaskType(row))
+    );
+    for (const diagnostic of found) {
+      const entry = diagnosticCounts.get(diagnostic.id);
+      if (entry) entry.sessions += 1;
+      else diagnosticCounts.set(diagnostic.id, { diagnostic, sessions: 1 });
+    }
+  }
+  const diagnosticSummary = [...diagnosticCounts.values()]
+    .sort((a, b) => b.sessions - a.sessions)
+    .map(({ diagnostic, sessions }) => ({
+      id: diagnostic.id,
+      severity: diagnostic.severity,
+      title: diagnostic.title,
+      detail: diagnostic.detail,
+      docUrl: diagnostic.docUrl,
+      sessions,
+    }));
 
   const toInsight = (row: (typeof periodRows)[number]): InsightSession => ({
     id: row.id,
@@ -866,6 +916,8 @@ export async function getInsightsData(userId: string, filter?: InsightsFilter) {
     mostExpensive,
     chattiest,
     successfulTrend,
+    diagnosticSummary,
+    diagnosticSessionCount: withTelemetry.length,
   };
 }
 
@@ -881,18 +933,30 @@ export type Baseline = {
 const BASELINE_DAYS = 90;
 const BASELINE_MIN_PROMPT_SAMPLES = 5;
 
-/** Per-task-type medians over the last 90 days of native sessions, for the CLI statusline (USD, no currency conversion). */
-export async function getBaselines(userId: string): Promise<Baseline[]> {
+export type HistoryStats = {
+  baselines: Baseline[];
+  /** Peak-context level above which a session counts as heavy, calibrated on the user's own history. */
+  peakContextThreshold: number;
+};
+
+/** Per-task-type medians and context threshold over the last 90 days of native sessions (USD, no currency conversion). */
+export async function getHistoryStats(userId: string): Promise<HistoryStats> {
   const since = new Date();
   since.setDate(since.getDate() - BASELINE_DAYS);
   const rows = await prisma.session.findMany({
     where: { project: { userId }, source: null, startedAt: { gte: since } },
     orderBy: { startedAt: "desc" },
     take: 5000,
-    select: { gitBranch: true, taskType: true, estimatedCostUsd: true, promptCount: true },
+    select: {
+      gitBranch: true,
+      taskType: true,
+      estimatedCostUsd: true,
+      promptCount: true,
+      peakContextTokens: true,
+    },
   });
 
-  return TASK_TYPES.flatMap((taskType) => {
+  const baselines = TASK_TYPES.flatMap((taskType) => {
     const group = rows.filter((row) => effectiveTaskType(row) === taskType);
     if (group.length === 0) return [];
     const prompts = group.map((row) => row.promptCount).filter((v): v is number => v !== null);
@@ -905,6 +969,87 @@ export async function getBaselines(userId: string): Promise<Baseline[]> {
       },
     ];
   });
+
+  return {
+    baselines,
+    peakContextThreshold: peakContextThresholdFor(rows.map((row) => row.peakContextTokens)),
+  };
+}
+
+/** Per-task-type medians for the CLI statusline. */
+export async function getBaselines(userId: string): Promise<Baseline[]> {
+  return (await getHistoryStats(userId)).baselines;
+}
+
+/** A task type needs this many sessions before its median is trusted for comparisons. */
+const MIN_BASELINE_SESSIONS = 5;
+
+function diagnosticContext(history: HistoryStats, taskType: TaskType): DiagnosticContext {
+  const baseline = history.baselines.find(
+    (b) => b.taskType === taskType && b.n >= MIN_BASELINE_SESSIONS
+  );
+  return {
+    peakContextThreshold: history.peakContextThreshold,
+    baseline: baseline
+      ? { medianPrompts: baseline.medianPrompts, medianCostUsd: baseline.medianCostUsd }
+      : null,
+  };
+}
+
+type DiagnosableRow = {
+  claudeMdLines: number | null;
+  peakContextTokens: number | null;
+  compactionCount: number | null;
+  tokensInput: number;
+  tokensCacheRead: number;
+  tokensCacheCreation: number;
+  estimatedCostUsd: unknown;
+  promptCount: number | null;
+  commitCount: number | null;
+  editAccepted: number | null;
+  editRejected: number | null;
+  toolCalls: number | null;
+  toolErrors: number | null;
+  apiErrorCount: number | null;
+  effort: string | null;
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  modelBreakdown: unknown;
+};
+
+/** Share of the session's estimated cost that went to Opus models; null without a per-model breakdown. */
+function opusCostShare(modelBreakdown: unknown): number | null {
+  const breakdown = parseModelBreakdown(modelBreakdown);
+  if (!breakdown) return null;
+  let total = 0;
+  let opus = 0;
+  for (const [model, bucket] of Object.entries(breakdown)) {
+    total += bucket.costUsd;
+    if (model.toLowerCase().includes("opus")) opus += bucket.costUsd;
+  }
+  return total > 0 ? opus / total : null;
+}
+
+function toDiagnosticInput(row: DiagnosableRow): DiagnosticInput {
+  const hasLines = row.linesAdded !== null || row.linesRemoved !== null;
+  return {
+    claudeMdLines: row.claudeMdLines,
+    peakContextTokens: row.peakContextTokens,
+    compactionCount: row.compactionCount,
+    cacheRatio: cacheRatio(row),
+    inputSideTokens: row.tokensInput + row.tokensCacheRead + row.tokensCacheCreation,
+    promptCount: row.promptCount,
+    commitCount: row.commitCount,
+    editAccepted: row.editAccepted,
+    editRejected: row.editRejected,
+    toolCalls: row.toolCalls,
+    toolErrors: row.toolErrors,
+    apiErrorCount: row.apiErrorCount,
+    effort: row.effort,
+    linesChanged: hasLines ? (row.linesAdded ?? 0) + (row.linesRemoved ?? 0) : null,
+    opusCostShare: opusCostShare(row.modelBreakdown),
+    costUsd: Number(row.estimatedCostUsd),
+  };
 }
 
 /** One flat row per session for CSV/JSON export, in the user's display currency. */

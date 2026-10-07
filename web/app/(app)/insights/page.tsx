@@ -196,6 +196,49 @@ export default async function InsightsPage({
         ))}
       </div>
 
+      <div className="mb-5 overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="border-b border-border px-5.5 py-3">
+          <div className="text-[13.5px] font-medium text-foreground-secondary">What is costing you</div>
+          <div className="text-[12px] text-dim">
+            How many of your {data.diagnosticSessionCount} sessions with telemetry triggered each
+            rule. Thresholds are calibrated on your own history where there is enough of it.
+          </div>
+        </div>
+        {data.diagnosticSummary.length === 0 ? (
+          <div className="px-5.5 py-8 text-center text-sm text-muted">
+            {data.diagnosticSessionCount === 0
+              ? "No sessions with telemetry in this period yet."
+              : "No rule fired in this period."}
+          </div>
+        ) : (
+          data.diagnosticSummary.map((d) => (
+            <div
+              key={d.id}
+              className="flex items-start justify-between gap-4 border-b border-border/60 px-5.5 py-3 last:border-b-0"
+            >
+              <div className="text-[13px]">
+                <div className="font-medium">{d.title}</div>
+                <p className="mt-0.5 text-muted">{d.detail}</p>
+                <a
+                  href={d.docUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[12px] text-dim underline hover:text-foreground"
+                >
+                  Claude Code docs
+                </a>
+              </div>
+              <div className="shrink-0 text-right font-mono text-[13px]">
+                {d.sessions} / {data.diagnosticSessionCount}
+                <div className="text-[11px] text-dim">
+                  {Math.round((d.sessions / data.diagnosticSessionCount) * 100)}% of sessions
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
       <div className="mb-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <TopList
           title="Most expensive — last 7 days"
