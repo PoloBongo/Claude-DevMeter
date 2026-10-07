@@ -30,6 +30,25 @@ Verifies: register/login → API key → collector CLI → OTLP receiver →
 5. Check the dashboard and project detail page render the session
    correctly (duration, tokens, AI cost, total cost per the active pricing
    mode).
+6. For the quality features, also check: `/insights` (by-type table,
+   "What is costing you" card, export buttons), a session page
+   (`/dashboard/sessions/<id>`: stats, Diagnostics panel, review form —
+   edit type/rating/tag, save, reload), and a legacy payload with none of
+   the new fields (must ingest with 201 and show "—", never 0). To trigger
+   diagnostics, POST sessions with e.g. `promptCount`, `compactionCount`,
+   `peakContextTokens`, `claudeMdLines`; a task type needs 5+ sessions
+   before median-based rules (many prompts, cost outlier) can fire.
+   `GET /api/baselines` (Bearer key) shows the medians; read `/api/export`
+   through `fetch()` in the page (`javascript_tool`) instead of navigating,
+   which would trigger a file download.
+7. For `devmeter statusline`, never touch the real `~/.devmeter`: set
+   `USERPROFILE`/`HOME` to a temp dir, write a `config.json` with the test
+   key and `http://localhost:3000`, run `refreshBaselines`, then pipe a
+   sample JSON to `node collector/src/cli.ts statusline`.
+
+Gotcha: right after `npm run dev` starts, wait for the register/login page
+to hydrate (reload, wait a few seconds) before filling and submitting, or
+the click silently does nothing.
 
 ## Cleanup
 
@@ -46,4 +65,6 @@ await client.end();
 ```
 
 Run with `node web/scratch-cleanup.mjs`, then delete the script. Sessions
-and projects cascade-delete with the user.
+and projects cascade-delete with the user. Afterwards confirm nothing is
+left (count of `User`/`Project`/`Session` rows for the test email, project
+names and `clientSessionId` prefixes you used) and stop the dev server.

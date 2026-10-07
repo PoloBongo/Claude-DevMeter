@@ -10,6 +10,25 @@
   production — there's no separate dev/staging database). Running
   `prisma migrate dev` here applies directly to prod. Clean up any
   test accounts/sessions created during manual testing afterward.
+- **Migrations are additive only** (nullable columns or defaults; never drop
+  or rename) so old sessions and already-installed collectors keep working.
+  Generate with `prisma migrate dev --create-only`, show the SQL to the
+  user, and apply only after an explicit go. If the auto-mode classifier
+  blocks `prisma migrate deploy` ("no verdict"), don't work around it: ask
+  the user to run it with `! cd web && npx prisma migrate deploy`.
+- Privacy rule for the collector/ingest: counters and metadata only. Never
+  store prompt text or tool output, and never enable `OTEL_LOG_USER_PROMPTS`
+  or `OTEL_LOG_TOOL_DETAILS`. A signal Claude Code didn't report stays
+  `null` (shown as "—"), never 0.
+- Put new pure logic in `web/lib/*.ts` with no `@/` imports and a
+  `*.test.ts` next to it (`npm test` in `web/`, plain `node --test`); the
+  collector has the same (`npm test` in `collector/`). Run both, plus `tsc`,
+  `eslint` and `next build`, before pushing.
+- Collector releases: bump `collector/package.json`'s version in the same
+  push — CI then publishes to npm (needs the `NPM_TOKEN` secret to be a
+  granular token with 2FA bypass; `EOTP` in the run means it isn't).
+- After each delivered stage, tag the deployed commit (`vN-<name>`) and push
+  the tag so any stage can be rolled back; existing tags: `git tag -n1`.
 - Vercel deploys are triggered by pushing to `main` (GitHub integration).
   After pushing, poll `vercel ls` / `vercel inspect --logs` until the
   build finishes instead of assuming it succeeded.
