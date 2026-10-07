@@ -140,13 +140,63 @@ Sessions are tagged with the current git branch (and a ticket ref
 auto-extracted from it, e.g. `fix/TICKET-148-...` → `TICKET-148`), and show
 up on the dashboard as soon as the session ends.
 
+### What the collector listens to
+
+Both commands start a local OTLP/HTTP-JSON receiver and point Claude Code at
+it (`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` = `otlp`):
+
+| Endpoint | Signal | Used for |
+|---|---|---|
+| `/v1/metrics` | `claude_code.token.usage` | tokens per model, cost |
+| `/v1/metrics` | `claude_code.lines_of_code.count` (`type` = added/removed) | `linesAdded`, `linesRemoved` |
+| `/v1/metrics` | `claude_code.commit.count`, `claude_code.pull_request.count` | `commitCount`, `prCount` |
+| `/v1/metrics` | `claude_code.code_edit_tool.decision` (`decision` = accept/reject) | `editAccepted`, `editRejected` |
+| `/v1/logs` | `user_prompt` event | `promptCount` |
+| `/v1/logs` | `tool_result` event (`success`) | `toolCalls`, `toolErrors` |
+
+**Privacy:** only counters and metadata are stored. The receiver reads
+`event.name` and `success` from log events and nothing else; prompt text and
+tool inputs/outputs are never read or sent, and DevMeter does not enable
+`OTEL_LOG_USER_PROMPTS` or `OTEL_LOG_TOOL_DETAILS`.
+
+A counter is only sent once Claude Code has reported that signal, so a field
+is `null` (shown as "—") rather than a misleading `0` when it is unknown.
+Known limits: Claude Code does not expose reverts (that flag is manual), and
+log events emitted in the last seconds before `claude` is killed may not be
+flushed.
+
+After upgrading the collector (`npm install -g devmeter-cli`), restart any
+`devmeter start` / `devmeter claude` sessions that were already running — they
+keep the code they started with.
+
+### Insights
+
+The **Insights** page compares sessions by task type (average cost, prompts
+and cache ratio), lists the week's most expensive and chattiest sessions, and
+plots prompts per successful session (one that ended in at least one commit)
+over time. Each session has a detail page where you can set its task type,
+a 1–5 rating, a short comment and a "reverted later" flag.
+
 ## Data model
 
 - `User` — email/password, hourly rate, hashed API key.
 - `Project` — one per client/repo, auto-created by the collector on first
   ingest (matched by name) or manually from the dashboard.
 - `Session` — one row per collector run: git branch, ticket ref, start/end
-  time, token counts, estimated AI cost.
+  time, token counts, estimated AI cost, plus the quality signals below.
+  Every signal column is nullable: `null` means "not reported" (older
+  sessions, older collectors, imports), never zero.
+  - `taskType` — `bugfix | feature | refactor | chore | docs | test | other`,
+    derived from the branch prefix (`fix/`, `bugfix/`, `feat/`, `feature/`,
+    `refactor/`, …, `other` by default). `taskTypeManual` is set when edited
+    in the dashboard, so later syncs don't overwrite it.
+  - Friction counters: `promptCount`, `editAccepted`, `editRejected`,
+    `toolCalls`, `toolErrors`, `linesAdded`, `linesRemoved`.
+  - Outcome: `commitCount`, `prCount` (a session "ended in a commit" when
+    `commitCount > 0`), and manual `rating` (1–5), `ratingComment`,
+    `revertedLater`.
+  - Cache ratio is computed on read, not stored:
+    `cacheRead / (input + cacheRead + cacheCreation)`.
 
 ## Updating AI pricing
 
